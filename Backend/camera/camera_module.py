@@ -12,9 +12,10 @@ import os
 import sys
 import threading
 import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Deque, Dict, List, Optional, Tuple
 
 import cv2
 
@@ -27,18 +28,25 @@ except (ImportError, ModuleNotFoundError):
     logging.warning("Database module not found. Events will be logged to console only.")
 
 
-def _import_gemini_describer() -> Callable[[str], str]:
-    """Return `describe_image` callable if available, else a safe fallback."""
+def _import_gemini_helpers() -> (Callable[[str], str], Callable[[str], str]):
+    """Return `describe_image` and `summarize_video` callables if available, else safe fallbacks."""
     try:
-        from ..ai.gemini_client import describe_image
-        if callable(describe_image):
-            return describe_image
+        from ..ai.gemini_client import describe_image, summarize_video
+        if not callable(describe_image):
+            raise ImportError("describe_image not callable")
+        if not callable(summarize_video):
+            raise ImportError("summarize_video not callable")
+        return describe_image, summarize_video
     except (ImportError, ModuleNotFoundError) as exc:
-        logging.warning("Gemini client unavailable: %s", exc)
+        logging.warning("Gemini client unavailable or incomplete: %s", exc)
 
-    def _fallback(image_path: str) -> str:
+    def _fallback_describe(image_path: str) -> str:
         return "Vision caption unavailable"
-    return _fallback
+    
+    def _fallback_summarize(video_path: str) -> str:
+        return "Video summary unavailable"
+
+    return _fallback_describe, _fallback_summarize
 
 
 def _load_yolo_model():
@@ -51,6 +59,79 @@ def _load_yolo_model():
     except (ImportError, ModuleNotFoundError, Exception) as exc:
         logging.warning("YOLO model unavailable: %s", exc)
         return None
+
+def analyze_and_log_video(
+    video_path: str,
+    yolo_model,
+    describe_image: Callable,
+    summarize_video: Callable,
+    image_dir: Path,
+):
+    """
+    Analyzes a video in a separate thread, generates a summary, and logs the event.
+    """
+    try:
+        logging.info(f"Starting analysis for {video_path}...")
+        
+        # For YOLO and initial description, we can still use the first frame.
+        # This provides a quick preview/thumbnail.
+        cap = cv2.VideoCapture(video_path)
+        ret, frame = cap.read()
+        cap.release()
+
+        if not ret:
+            logging.error(f"Failed to read first frame from {video_path} for analysis.")
+            return
+
+        ts_utc = datetime.utcnow()
+        first_frame_filename = f"thumbnail_{ts_utc.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+        first_frame_path = image_dir / first_frame_filename
+        cv2.imwrite(str(first_frame_path), frame)
+
+        # --- AI Analysis ---
+        # 1. YOLO object detection on the first frame
+        objects = []
+        if yolo_model:
+            try:
+                results = yolo_model(first_frame_path, verbose=False)
+                if results and hasattr(results[0], "names"):
+                    box_classes = results[0].boxes.cls.cpu().numpy()
+                    objects = sorted(list(set(results[0].names[int(c)] for c in box_classes)))
+            except Exception as e:
+                logging.error(f"YOLO prediction failed: {e}")
+
+        # 2. Gemini video summarization
+        summary = ""
+        try:
+            summary = summarize_video(video_path)
+        except Exception as e:
+            logging.error(f"Gemini video summary failed: {e}")
+
+        # --- Event Logging ---
+        desc_parts = []
+        if objects:
+            desc_parts.append(f"Objects detected: {', '.join(objects)}")
+        if summary:
+            desc_parts.append(f"AI Summary: {summary}")
+        
+        description = " | ".join(desc_parts) or "Video recorded"
+        
+        logging.info(f"Analysis complete for {video_path}: {description}")
+
+        if add_event:
+            try:
+                add_event(
+                    event_type="video_recording",
+                    timestamp=ts_utc.isoformat(),
+                    description=description,
+                    image_path=video_path, # The path to the video file
+                )
+            except Exception as e:
+                logging.error(f"Failed to save video event to database: {e}")
+
+    except Exception as e:
+        logging.critical(f"An error occurred during video analysis for {video_path}: {e}", exc_info=True)
+
 
 # --- Main Camera Loop ---
 
@@ -65,15 +146,23 @@ def run_camera_loop(
     capture_fps: Optional[float] = None,
     max_frame_failures: int = 10,
     warmup_period: float = 2.0,
+    inactivity_timeout: float = 5.0,
+    delta_thresh: int = 50,
 ):
     """
     Main webcam loop for motion detection and event creation.
     """
     yolo_model = _load_yolo_model()
-    describe_image = _import_gemini_describer()
-    ref_frame = None
+    describe_image, summarize_video = _import_gemini_helpers()
+    
+    # Use a deque to store recent motion levels
+    motion_history_length = int(processing_fps * 2)  # Store 2 seconds of motion data
+    motion_history: Deque[float] = deque(maxlen=motion_history_length)
     
     image_dir.mkdir(parents=True, exist_ok=True)
+    # Create a directory for video recordings
+    recording_dir = image_dir.parent / "recordings"
+    recording_dir.mkdir(parents=True, exist_ok=True)
 
     def _open_capture() -> cv2.VideoCapture:
         """Opens, configures, and primes the video capture device."""
@@ -110,7 +199,13 @@ def run_camera_loop(
         raise RuntimeError("FATAL: Camera opened but failed to start streaming.")
 
     cap = _open_capture()
+    is_recording = False
+    last_motion_time = None
+    video_writer = None
     consecutive_failures = 0
+    
+    # We need two frames for comparison
+    prev_gray_frame = None
     
     logging.info(f"Starting motion detection loop at ~{processing_fps:.1f} FPS.")
 
@@ -140,66 +235,73 @@ def run_camera_loop(
             gray_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
             gray_frame = cv2.GaussianBlur(gray_frame, (21, 21), 0)
 
-            if ref_frame is None:
-                ref_frame = gray_frame
+            if prev_gray_frame is None:
+                prev_gray_frame = gray_frame
                 continue
 
-            delta = cv2.absdiff(ref_frame, gray_frame)
-            thresh = cv2.threshold(delta, 30, 255, cv2.THRESH_BINARY)[1]
+            delta = cv2.absdiff(prev_gray_frame, gray_frame)
+            thresh = cv2.threshold(delta, delta_thresh, 255, cv2.THRESH_BINARY)[1]
             thresh = cv2.dilate(thresh, None, iterations=2)
             contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # Update the previous frame for the next iteration
+            prev_gray_frame = gray_frame
 
-            motion_detected = any(cv2.contourArea(c) >= min_contour_area for c in contours)
+            # Calculate a "motion level" for the current frame
+            total_contour_area = sum(cv2.contourArea(c) for c in contours)
+            motion_history.append(total_contour_area)
+            
+            # Determine if significant motion is happening based on history
+            # We consider motion to be happening if the average contour area is above our min threshold
+            avg_motion = sum(motion_history) / len(motion_history) if motion_history else 0
+            motion_detected = avg_motion > min_contour_area
 
             if motion_detected:
-                logging.info("Motion detected!")
-                ref_frame = gray_frame  # Update reference to avoid re-triggering
+                last_motion_time = time.monotonic()
+                if not is_recording:
+                    # --- Start of a new recording ---
+                    is_recording = True
+                    ts_utc = datetime.utcnow()
+                    video_filename = f"motion_{ts_utc.strftime('%Y%m%d_%H%M%S')}.mp4"
+                    video_path = str(recording_dir / video_filename)
+                    
+                    # Get frame dimensions for VideoWriter
+                    frame_height, frame_width, _ = frame.shape
+                    
+                    # Define the codec and create VideoWriter object
+                    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                    video_writer = cv2.VideoWriter(video_path, fourcc, capture_fps or processing_fps, (frame_width, frame_height))
+                    
+                    logging.info(f"Motion detected (avg level: {avg_motion:.0f})! Starting new recording: {video_path}")
+            
+            if is_recording:
+                if video_writer:
+                    video_writer.write(frame)
 
-                # --- Enrichment and Storage ---
-                ts_utc = datetime.utcnow()
-                filename = f"motion_{ts_utc.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
-                image_path = image_dir / filename
-                cv2.imwrite(str(image_path), frame)
-
-                # YOLO object detection
-                objects = []
-                if yolo_model:
-                    try:
-                        results = yolo_model(image_path, verbose=False)
-                        if results and hasattr(results[0], "names"):
-                            box_classes = results[0].boxes.cls.cpu().numpy()
-                            objects = sorted(list(set(results[0].names[int(c)] for c in box_classes)))
-                    except Exception as e:
-                        logging.error(f"YOLO prediction failed: {e}")
-
-                # Gemini captioning
-                caption = ""
-                try:
-                    caption = describe_image(str(image_path))
-                except Exception as e:
-                    logging.error(f"Gemini caption failed: {e}")
-
-                # Build description and save event
-                desc_parts = []
-                if objects:
-                    desc_parts.append(f"Objects: {', '.join(objects)}")
-                if caption:
-                    desc_parts.append(f"Caption: {caption}")
-                description = " | ".join(desc_parts) or "Motion detected"
-                
-                logging.info(f"Event: {description}")
-
-                if add_event:
-                    try:
-                        add_event(
-                            event_type="motion",
-                            timestamp=ts_utc.isoformat(),
-                            description=description,
-                            image_path=str(image_path),
+                # Check for inactivity to stop recording
+                # Inactivity is now defined as a lack of significant motion for the timeout period
+                if time.monotonic() - (last_motion_time or 0) > inactivity_timeout:
+                    logging.info(f"Motion level below threshold for {inactivity_timeout}s. Stopping recording: {video_path}")
+                    is_recording = False
+                    if video_writer:
+                        video_writer.release()
+                        
+                        # Start analysis in a new thread
+                        analysis_thread = threading.Thread(
+                            target=analyze_and_log_video,
+                            args=(
+                                video_path,
+                                yolo_model,
+                                describe_image,
+                                summarize_video,
+                                image_dir,
+                            ),
+                            daemon=True,
                         )
-                    except Exception as e:
-                        logging.error(f"Failed to save event to database: {e}")
+                        analysis_thread.start()
 
+                        video_writer = None
+            
             # --- Frame Rate Control ---
             elapsed = time.monotonic() - read_start_time
             sleep_time = (1.0 / processing_fps) - elapsed
@@ -207,8 +309,10 @@ def run_camera_loop(
                 time.sleep(sleep_time)
 
     finally:
-        if cap.isOpened():
+        if 'cap' in locals() and cap.isOpened():
             cap.release()
+        if video_writer: # Ensure writer is released on exit
+            video_writer.release()
         logging.info("Camera loop stopped.")
 
 
@@ -224,6 +328,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--height", type=int, help="Requested capture height (pixels).")
     parser.add_argument("--capture-fps", type=float, help="Requested capture FPS from the device.")
     parser.add_argument("--max-frame-failures", type=int, default=10, help="Max consecutive frame read failures.")
+    parser.add_argument("--inactivity-timeout", type=float, default=5.0, help="Seconds of no motion to stop recording.")
+    parser.add_argument("--delta-thresh", type=int, default=50, help="Threshold for detecting pixel changes (1-255).")
     args = parser.parse_args(argv)
 
     stop_event = threading.Event()
@@ -255,6 +361,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             capture_height=args.height,
             capture_fps=args.capture_fps,
             max_frame_failures=args.max_frame_failures,
+            inactivity_timeout=args.inactivity_timeout,
+            delta_thresh=args.delta_thresh,
         )
     except Exception as e:
         logging.critical(f"An unrecoverable error occurred: {e}", exc_info=True)

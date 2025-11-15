@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import mimetypes
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -33,7 +34,7 @@ if load_dotenv:
 
 _MODEL = None
 
-__all__ = ["describe_image"]
+__all__ = ["describe_image", "summarize_video"]
 
 
 def _get_api_key() -> str:
@@ -111,6 +112,63 @@ def describe_image(image_path: str, prompt: Optional[str] = None, timeout: int =
                     return text.strip()
 
     return "No caption returned"
+
+
+def summarize_video(video_path: str, prompt: Optional[str] = None, timeout: int = 300) -> str:
+    """Return a natural-language summary of a video file using the Gemini API.
+
+    Args:
+        video_path: Path to a local video file.
+        prompt: Optional custom instruction.
+        timeout: Seconds to wait for Gemini response.
+
+    Raises:
+        FileNotFoundError: if the video path does not exist.
+        RuntimeError: if configuration or Gemini API calls fail.
+
+    Returns:
+        Summary text string. Falls back to "No summary returned" if model returns empty content.
+    """
+    path = Path(video_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Video not found: {video_path}")
+
+    model = _get_model()
+    instruction = prompt or "Summarize this video. Describe the key objects, people, and actions."
+
+    LOGGER.info(f"Uploading video for analysis: {path.name}")
+    video_file = genai.upload_file(path=path)
+
+    # Wait for the video to be processed
+    while video_file.state.name == "PROCESSING":
+        time.sleep(10)
+        video_file = genai.get_file(video_file.name)
+
+    if video_file.state.name == "FAILED":
+        raise RuntimeError(f"Video processing failed for {path.name}")
+
+    LOGGER.info(f"Video uploaded successfully. Generating summary for {path.name}...")
+
+    try:
+        response = model.generate_content(
+            [instruction, video_file],
+            request_options={"timeout": timeout},
+        )
+    except Exception as exc:
+        # Clean up the uploaded file on error
+        genai.delete_file(video_file.name)
+        LOGGER.error(f"Gemini video summary failed: {exc}", exc_info=True)
+        raise RuntimeError(f"Gemini video summary failed: {exc}") from exc
+
+    # Clean up the uploaded file
+    genai.delete_file(video_file.name)
+    LOGGER.info(f"Cleaned up uploaded file: {video_file.name}")
+
+    summary = getattr(response, "text", None)
+    if summary:
+        return summary.strip()
+
+    return "No summary returned"
 
 
 if __name__ == "__main__":
