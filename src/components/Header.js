@@ -55,7 +55,7 @@ function Header() {
   };
 
   return (
-    <header className="bg-gradient-to-r from-primary-600 to-primary-600 text-white shadow-lg">
+    <header className="bg-primary-500 text-white shadow-lg">
       <div className="relative px-4 py-4">
         <div className="flex items-center justify-between">
           <div className="flex-shrink-0 w-1/3"></div>

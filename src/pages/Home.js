@@ -16,11 +16,11 @@ function Home() {
 
         <div className="rounded-lg p-8 mb-16 bg-white rounded-lg p-8 shadow-md border border-gray-100">
           <h3 className="text-3xl font-bold text-primary-800 mb-6 text-center">
-            How It Works
+            How it works
           </h3>
           <div className="grid md:grid-cols-3 gap-8">
             <div className="text-center">
-              <div className="bg-primary-600 text-white w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold mx-auto mb-4">
+              <div className="bg-primary-500 text-white w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold mx-auto mb-4">
                 1
               </div>
               <h4 className="text-xl font-semibold text-primary-800 mb-2">
@@ -31,7 +31,7 @@ function Home() {
               </p>
             </div>
             <div className="text-center">
-              <div className="bg-primary-600 text-white w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold mx-auto mb-4">
+              <div className="bg-primary-500 text-white w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold mx-auto mb-4">
                 2
               </div>
               <h4 className="text-xl font-semibold text-primary-800 mb-2">
@@ -43,7 +43,7 @@ function Home() {
               </p>
             </div>
             <div className="text-center">
-              <div className="bg-primary-600 text-white w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold mx-auto mb-4">
+              <div className="bg-primary-500 text-white w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold mx-auto mb-4">
                 3
               </div>
               <h4 className="text-xl font-semibold text-primary-800 mb-2">
@@ -63,7 +63,7 @@ function Home() {
           </h3>
           <Link
             to="/recording"
-            className="inline-block bg-primary-600 text-white px-8 py-3 rounded-lg font-medium hover:bg-primary-700 transition-colors duration-200 shadow-sm"
+            className="inline-block bg-primary-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-primary-700 transition-colors duration-200 shadow-sm"
           >
             Get Started →
           </Link>

@@ -68,7 +68,7 @@ function Recording() {
               className={`px-6 py-3 rounded-lg font-medium transition-colors duration-200 shadow-sm ${
                 isRecording
                   ? "bg-gray-400 text-gray-200 cursor-not-allowed"
-                  : "bg-primary-600 text-white hover:bg-primary-700"
+                  : "bg-primary-500 text-white hover:bg-primary-700"
               }`}
             >
               Start Recording
@@ -97,7 +97,7 @@ function Recording() {
             className={`mt-4 px-4 py-2 rounded-lg font-medium transition-colors duration-200 shadow-sm text-sm ${
               index >= eventTitles.length
                 ? "bg-gray-400 text-gray-200 cursor-not-allowed"
-                : "bg-primary-600 text-white hover:bg-primary-700"
+                : "bg-primary-500 text-white hover:bg-primary-700"
             }`}
           >
             Add Event
