@@ -1,14 +1,22 @@
--- Memory nodes table: stores audio transcripts with timestamps and optional video/audio paths
--- Each row is a "memory node" that can be searched/recalled by AI
-CREATE TABLE IF NOT EXISTS memory_nodes (
+CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    transcript TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
-    audio_path TEXT,
-    video_path TEXT,
-    video_summary TEXT
+    type TEXT,
+    timestamp TEXT,
+    description TEXT,
+    image_path TEXT,
+    audio_path TEXT
 );
 
--- Index for faster text search
-CREATE INDEX IF NOT EXISTS idx_transcript ON memory_nodes(transcript);
+CREATE TABLE IF NOT EXISTS transcripts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER,
+    text TEXT
+);
+
+CREATE TABLE IF NOT EXISTS reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT,
+    due_time TEXT,
+    event_id INTEGER
+);
 
