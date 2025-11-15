@@ -14,6 +14,15 @@ const eventTitles = [
   "event8",
   "event9",
   "event10",
+  "event11",
+  "event12",
+  "event13",
+  "event14",
+  "event15",
+  "event16",
+  "event17",
+  "event18",
+  "event19",
 ];
 
 function Recording() {

@@ -1,7 +1,37 @@
-import React from "react";
-import { Link } from "react-router-dom";
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { signInWithPopup, GoogleAuthProvider } from "firebase/auth";
+import { auth } from "../firebase";
 
 function Home() {
+  const [user, setUser] = useState(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      setUser(user);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleGetStarted = async () => {
+    if (user) {
+      navigate("/recording");
+    } else {
+      const provider = new GoogleAuthProvider();
+      provider.addScope("profile");
+      provider.addScope("email");
+
+      try {
+        await signInWithPopup(auth, provider);
+        navigate("/recording");
+      } catch (error) {
+        console.error("Error signing in:", error);
+      }
+    }
+  };
+
   return (
     <main className="flex-1 bg-background">
       <div className="container mx-auto px-6 py-12">
@@ -61,12 +91,12 @@ function Home() {
           <h3 className="text-2xl font-bold text-primary-800 mb-4">
             Ready to try now?
           </h3>
-          <Link
-            to="/recording"
+          <button
+            onClick={handleGetStarted}
             className="inline-block bg-primary-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-primary-700 transition-colors duration-200 shadow-sm"
           >
             Get Started →
-          </Link>
+          </button>
         </div>
       </div>
     </main>
