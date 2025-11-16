@@ -28,3 +28,7 @@ yarn-error.log*
 
 # Python
 __pycache__/
+
+yolov8n.pt
+app.db
+Backend/data/
