@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test script for MemoryNode system and Gemini search functionality.
 
@@ -14,7 +13,6 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-# Add the Backend directory to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from db.database import (
@@ -37,7 +35,6 @@ def create_sample_memory_nodes():
     audio_dir = data_dir / "audio"
     transcripts_dir = data_dir / "transcripts"
     
-    # Create directories if they don't exist
     recordings_dir.mkdir(parents=True, exist_ok=True)
     audio_dir.mkdir(parents=True, exist_ok=True)
     transcripts_dir.mkdir(parents=True, exist_ok=True)
@@ -114,20 +111,16 @@ def test_get_memory_nodes():
     print("Testing MemoryNode Retrieval")
     print("=" * 60)
     
-    # Get all nodes
     all_nodes = get_memory_nodes()
     print(f"\n1. Total MemoryNodes: {len(all_nodes)}")
     
-    # Get by file type
     for file_type in ["recording", "video", "audio", "transcript"]:
         nodes = get_memory_nodes(file_type=file_type)
         print(f"   {file_type.capitalize()} nodes: {len(nodes)}")
     
-    # Get with limit
     limited = get_memory_nodes(limit=3)
     print(f"\n2. Limited to 3 nodes: {len(limited)}")
     
-    # Show sample node
     if all_nodes:
         sample = all_nodes[0]
         print(f"\n3. Sample MemoryNode (ID: {sample['id']}):")
@@ -149,7 +142,6 @@ def test_gemini_search():
     print("Testing Gemini Search for Most Relevant MemoryNode")
     print("=" * 60)
     
-    # Get all MemoryNodes for search
     all_nodes = get_all_memory_nodes_for_search()
     
     if not all_nodes:
@@ -163,7 +155,6 @@ def test_gemini_search():
     
     print(f"\nSearching through {len(all_nodes)} MemoryNodes\n")
     
-    # Test queries
     test_queries = [
         "Find videos with people in them",
         "Show me transcripts about work or projects",
@@ -193,7 +184,6 @@ def test_gemini_search():
                     print(f"       Path: {Path(node['file_path']).name}")
                     print(f"       Timestamp: {node['timestamp']}")
                     
-                    # Show relevant metadata
                     if node.get('metadata'):
                         try:
                             metadata = json.loads(node['metadata']) if isinstance(node['metadata'], str) else node['metadata']
@@ -244,7 +234,7 @@ def test_get_most_relevant():
             results = search_memory_nodes(
                 query=query,
                 memory_nodes=all_nodes,
-                max_results=1  # Get only the most relevant one
+                max_results=1
             )
             
             if results:
@@ -255,7 +245,6 @@ def test_get_most_relevant():
                 print(f"  File: {Path(node['file_path']).name}")
                 print(f"  Timestamp: {node['timestamp']}")
                 
-                # Get full node details
                 full_node = get_memory_node_by_id(node['id'])
                 if full_node and full_node.get('metadata'):
                     try:
@@ -296,7 +285,6 @@ def interactive_search():
     
     while True:
         try:
-            # Get user query
             query = input("\n🔍 What are you looking for? (or 'quit' to exit): ").strip()
             
             if not query:
@@ -309,14 +297,12 @@ def interactive_search():
             print(f"\nSearching for: '{query}'")
             print("-" * 60)
             
-            # Ask for number of results
             try:
                 max_results_input = input("How many results? (default: 3): ").strip()
                 max_results = int(max_results_input) if max_results_input else 3
             except ValueError:
                 max_results = 3
             
-            # Perform search
             try:
                 results = search_memory_nodes(
                     query=query,
@@ -332,7 +318,6 @@ def interactive_search():
                         print(f"    Path: {Path(node['file_path']).name}")
                         print(f"    Timestamp: {node['timestamp']}")
                         
-                        # Show relevant metadata
                         if node.get('metadata'):
                             try:
                                 metadata = json.loads(node['metadata']) if isinstance(node['metadata'], str) else node['metadata']
@@ -381,7 +366,6 @@ def main():
     print("MemoryNode System Test Suite")
     print("=" * 60 + "\n")
     
-    # Initialize database
     print("Initializing database...")
     try:
         init_db()
@@ -389,7 +373,6 @@ def main():
     except Exception as e:
         print(f"⚠ Database initialization warning: {e}\n")
     
-    # Check if we should create sample nodes
     existing_nodes = get_memory_nodes()
     if len(existing_nodes) == 0:
         print("No existing MemoryNodes found.")
@@ -399,7 +382,6 @@ def main():
     else:
         print(f"Found {len(existing_nodes)} existing MemoryNodes\n")
     
-    # Ask user what they want to do
     print("\nWhat would you like to do?")
     print("1. Run automated tests")
     print("2. Interactive search (enter your own queries)")
@@ -409,7 +391,6 @@ def main():
     
     try:
         if choice == "1":
-            # Run automated tests
             test_get_memory_nodes()
             test_gemini_search()
             test_get_most_relevant()
@@ -419,11 +400,9 @@ def main():
             print("=" * 60 + "\n")
             
         elif choice == "2":
-            # Interactive search only
             interactive_search()
             
         elif choice == "3":
-            # Both
             test_get_memory_nodes()
             print("\n")
             interactive_search()

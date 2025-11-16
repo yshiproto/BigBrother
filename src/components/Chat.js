@@ -23,25 +23,21 @@ function Chat({ onSendMessage }) {
 
       recognitionRef.current.onresult = (event) => {
         if (isProcessingRef.current) {
-          return; // Prevent multiple simultaneous updates
+          return;
         }
         isProcessingRef.current = true;
 
         let interimTranscript = "";
 
-        // Only process results from resultIndex onwards (new results)
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const transcript = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            // Add to final transcript
             finalTranscriptRef.current += transcript + " ";
           } else {
-            // Current interim result
             interimTranscript += transcript;
           }
         }
 
-        // Update message with final transcript + current interim transcript
         setMessage(finalTranscriptRef.current + interimTranscript);
 
         isProcessingRef.current = false;
@@ -56,7 +52,6 @@ function Chat({ onSendMessage }) {
       recognitionRef.current.onend = () => {
         setIsListening(false);
         isProcessingRef.current = false;
-        // Ensure final transcript is set
         if (finalTranscriptRef.current) {
           setMessage(finalTranscriptRef.current.trim());
         }
@@ -80,7 +75,6 @@ function Chat({ onSendMessage }) {
       recognitionRef.current.stop();
       setIsListening(false);
     } else {
-      // Reset final transcript when starting new recognition
       finalTranscriptRef.current = "";
       setMessage("");
       recognitionRef.current.start();

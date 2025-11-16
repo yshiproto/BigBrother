@@ -18,10 +18,8 @@ def create_app():
         }
     )
 
-    # Initialize database on app start
     init_db()
 
-    # Register API routes
     app.register_blueprint(api, url_prefix="/api")
 
     @app.route("/")

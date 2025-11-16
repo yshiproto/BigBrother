@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import CameraRecorder from "../components/CameraRecorder";
 import Timeline from "../components/Timeline";
 import Chat from "../components/Chat";
+import ReactMarkdown from "react-markdown";
 
 const API_BASE_URL =
   process.env.REACT_APP_API_URL || "http://localhost:5000/api";
@@ -12,11 +13,22 @@ function Recording() {
   const [isCurrentlyRecording, setIsCurrentlyRecording] = useState(false);
   const [events, setEvents] = useState([]);
   const [selectedEvent, setSelectedEvent] = useState(null);
+  const [isGeneratingAnswer, setIsGeneratingAnswer] = useState(false);
 
-  // Fetch memory nodes and convert them to events
+  useEffect(() => {
+    if (selectedEvent) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "unset";
+    }
+
+    return () => {
+      document.body.style.overflow = "unset";
+    };
+  }, [selectedEvent]);
+
   const fetchMemoryNodes = async () => {
     try {
-      // First, cleanup orphaned memory nodes
       try {
         await fetch(`${API_BASE_URL}/memory-nodes/cleanup`, {
           method: "POST",
@@ -25,7 +37,6 @@ function Recording() {
           },
         });
       } catch (cleanupError) {
-        // Silently fail cleanup - not critical
         console.debug("Cleanup failed (non-critical):", cleanupError);
       }
 
@@ -47,7 +58,6 @@ function Recording() {
       const data = await response.json();
       const memoryNodes = data.memory_nodes || [];
 
-      // Convert memory nodes to events
       const convertedEvents = memoryNodes.map((node) => {
         let metadata = {};
         try {
@@ -59,7 +69,6 @@ function Recording() {
           console.error("Error parsing metadata:", e);
         }
 
-        // Check if summary is loading
         const summaryText = metadata.summary;
         const isSummaryLoading =
           summaryText === "Loading Summary..." ||
@@ -70,27 +79,22 @@ function Recording() {
           ? "Loading Summary..."
           : summaryText || "No summary available";
 
-        // Use title from metadata if available, otherwise generate from timestamp
         let eventTitle = metadata.title;
 
         if (!eventTitle || eventTitle.trim() === "") {
-          // Format timestamp as title (e.g., "11/15 11:52 PM")
           const timestamp = node.timestamp || new Date().toISOString();
 
-          // Ensure timestamp is treated as UTC - add 'Z' if not present
           let utcTimestamp = timestamp;
           if (
             !utcTimestamp.endsWith("Z") &&
             !utcTimestamp.includes("+") &&
             !utcTimestamp.includes("-", 10)
           ) {
-            // If no timezone info, assume it's UTC and add 'Z'
             utcTimestamp = utcTimestamp.replace(/\.\d{3,6}/, "") + "Z";
           }
 
           const date = new Date(utcTimestamp);
 
-          // Format as EST/EDT for title
           const formatter = new Intl.DateTimeFormat("en-US", {
             month: "2-digit",
             day: "2-digit",
@@ -100,7 +104,6 @@ function Recording() {
             timeZone: "America/New_York",
           });
 
-          // Use the formatter directly to get the correct timezone-adjusted string
           eventTitle = formatter.format(date);
         }
 
@@ -117,7 +120,6 @@ function Recording() {
         };
       });
 
-      // Sort by timestamp (oldest first, so newest appears at bottom)
       convertedEvents.sort((a, b) => {
         const dateA = new Date(a.timestamp);
         const dateB = new Date(b.timestamp);
@@ -138,56 +140,26 @@ function Recording() {
     setSelectedEvent(null);
   };
 
-  // Helper function to format summary text with proper line breaks
-  const formatSummary = (summary) => {
-    if (!summary || summary === "Loading Summary...") {
-      return summary;
-    }
-
-    let formatted = summary;
-
-    // Ensure there's a blank line before **Key sections
-    // Match patterns like **Key Objects:** or **Key People:** or **Key Actions:**
-    // Replace any occurrence of **Key sections that don't start on a new line
-    formatted = formatted.replace(/([^\n])(\*\*Key\s+[^*]+:\*\*)/g, "$1\n\n$2");
-
-    // Ensure each **Key section starts at the beginning of a line
-    formatted = formatted.replace(/\n(\*\*Key\s+[^*]+:\*\*)/g, "\n\n$1");
-
-    // Clean up any triple newlines (more than 2 consecutive newlines)
-    formatted = formatted.replace(/\n{3,}/g, "\n\n");
-
-    // Trim leading/trailing whitespace but preserve structure
-    formatted = formatted.trim();
-
-    return formatted;
-  };
-
-  // Helper function to convert file path to API URL (for videos, audio, images, transcripts)
   const getFileUrl = (filePath) => {
     if (!filePath) return null;
 
-    // Extract relative path from data directory
-    // Paths can be:
-    // - Absolute: "/Users/victor/Projects/BigBrother/Backend/data/recordings/file.mp4"
-    // - Relative to Backend: "Backend/data/recordings/file.mp4"
-    // - Already relative: "recordings/file.mp4"
+    if (filePath.startsWith("http://") || filePath.startsWith("https://")) {
+      return filePath;
+    }
+
     let relativePath = filePath;
 
-    // If it contains "data/", extract everything after "data/"
     if (filePath.includes("data/")) {
       const dataIndex = filePath.indexOf("data/");
-      relativePath = filePath.substring(dataIndex + 5); // 5 is length of "data/"
+      relativePath = filePath.substring(dataIndex + 5);
     } else if (
       filePath.startsWith("recordings/") ||
       filePath.startsWith("audio/") ||
       filePath.startsWith("images/") ||
       filePath.startsWith("transcripts/")
     ) {
-      // If it's already a relative path starting with the subdirectory, use it as is
       relativePath = filePath;
     } else if (filePath.includes("/recordings/")) {
-      // Extract from after the last "/recordings/"
       const recordingsIndex = filePath.lastIndexOf("/recordings/");
       relativePath = "recordings/" + filePath.substring(recordingsIndex + 12);
     } else if (filePath.includes("/audio/")) {
@@ -201,16 +173,13 @@ function Recording() {
       relativePath = "transcripts/" + filePath.substring(transcriptsIndex + 13);
     }
 
-    // Create API URL
     return `${API_BASE_URL}/files/${relativePath}`;
   };
 
-  // Helper function to convert video path to API URL (for backwards compatibility)
   const getVideoUrl = (videoPath) => {
     return getFileUrl(videoPath);
   };
 
-  // Helper function to convert audio path to API URL
   const getAudioUrl = (audioPath) => {
     return getFileUrl(audioPath);
   };
@@ -218,7 +187,7 @@ function Recording() {
   const handleStartRecording = async () => {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
 
       const response = await fetch(`${API_BASE_URL}/camera/start`, {
         method: "POST",
@@ -236,7 +205,6 @@ function Recording() {
 
       clearTimeout(timeoutId);
 
-      // Check if response is ok before trying to parse JSON
       if (!response.ok) {
         let errorData;
         try {
@@ -278,7 +246,6 @@ function Recording() {
         error.message.includes("Failed to fetch") ||
         error instanceof TypeError
       ) {
-        // Network/CORS error
         alert(
           "Could not connect to the backend server.\n\n" +
             "Please make sure the server is running:\n" +
@@ -294,7 +261,7 @@ function Recording() {
   const handleStopRecording = async () => {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
 
       const response = await fetch(`${API_BASE_URL}/camera/stop`, {
         method: "POST",
@@ -306,7 +273,6 @@ function Recording() {
 
       clearTimeout(timeoutId);
 
-      // Check if response is ok before trying to parse JSON
       if (!response.ok) {
         let errorData;
         try {
@@ -350,7 +316,6 @@ function Recording() {
         error.message.includes("Failed to fetch") ||
         error instanceof TypeError
       ) {
-        // Network/CORS error
         alert(
           "Could not connect to the backend server.\n\n" +
             "Please make sure the server is running:\n" +
@@ -363,7 +328,6 @@ function Recording() {
     }
   };
 
-  // Fetch memory nodes on mount and periodically
   useEffect(() => {
     const fetchAndRefresh = async () => {
       await fetchMemoryNodes();
@@ -371,35 +335,27 @@ function Recording() {
 
     fetchAndRefresh();
 
-    // Refresh events every 5 seconds to catch new recordings
     const refreshInterval = setInterval(fetchAndRefresh, 5000);
 
     return () => {
       clearInterval(refreshInterval);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Refresh events when recording stops
   useEffect(() => {
     if (!isRecording) {
-      // Wait a bit for backend to finish processing, then refresh
       const timeoutId = setTimeout(() => {
         fetchMemoryNodes();
-      }, 3000); // Wait 3 seconds after recording stops
+      }, 3000);
 
       return () => clearTimeout(timeoutId);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRecording]);
 
-  // Update selectedEvent when events array updates (e.g., when summary is generated)
   useEffect(() => {
     if (selectedEvent) {
-      // Find the updated event in the events array
       const updatedEvent = events.find((e) => e.id === selectedEvent.id);
       if (updatedEvent) {
-        // Only update if the event data has actually changed
         const summaryChanged = updatedEvent.summary !== selectedEvent.summary;
         const transcriptChanged =
           updatedEvent.transcript !== selectedEvent.transcript;
@@ -409,16 +365,12 @@ function Recording() {
         }
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [events]);
 
-  // Poll camera status regularly ONLY when recording is active
   useEffect(() => {
     let intervalId = null;
 
-    // Only poll if recording is active
     if (!isRecording) {
-      // Clear any existing interval
       if (intervalId) {
         clearInterval(intervalId);
         intervalId = null;
@@ -429,7 +381,7 @@ function Recording() {
     const checkCameraStatus = async () => {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
 
         const response = await fetch(`${API_BASE_URL}/camera/status`, {
           signal: controller.signal,
@@ -437,11 +389,10 @@ function Recording() {
           headers: {
             "Content-Type": "application/json",
           },
-        }).catch(() => null); // Catch network errors silently
+        }).catch(() => null);
 
         clearTimeout(timeoutId);
 
-        // If fetch failed (network error), response will be null
         if (!response || !response.ok) {
           return;
         }
@@ -449,7 +400,6 @@ function Recording() {
         try {
           const data = await response.json();
 
-          // Update motion and recording states
           if (data.motion_detected !== undefined) {
             setMotionDetected(data.motion_detected);
           }
@@ -457,23 +407,16 @@ function Recording() {
             setIsCurrentlyRecording(data.is_currently_recording);
           }
 
-          // If camera stopped on backend, update state
           if (data.is_running === false) {
             setIsRecording(false);
             setMotionDetected(false);
             setIsCurrentlyRecording(false);
           }
-        } catch (e) {
-          // JSON parse error - silently ignore
-        }
-      } catch (error) {
-        // Catch all errors silently
-      }
+        } catch (e) {}
+      } catch (error) {}
     };
 
-    // Start polling immediately when recording starts
     checkCameraStatus();
-    // Poll every 1 second for responsive updates during recording
     intervalId = setInterval(checkCameraStatus, 1000);
 
     return () => {
@@ -501,6 +444,8 @@ function Recording() {
       return;
     }
 
+    setIsGeneratingAnswer(true);
+
     try {
       const response = await fetch(`${API_BASE_URL}/generate-answer-audio`, {
         method: "POST",
@@ -517,51 +462,64 @@ function Recording() {
 
       if (!response.ok) {
         console.error("Failed to generate answer audio:", response.status);
+        setIsGeneratingAnswer(false);
         return;
       }
 
-      // Check if response is audio or JSON
       const contentType = response.headers.get("content-type");
 
       if (contentType && contentType.includes("audio/mpeg")) {
-        // Get the answer text from header if available
         const answerText = response.headers.get("X-Answer-Text");
         if (answerText) {
           console.log("Answer:", answerText);
         }
 
-        // Get audio blob and play it
         const audioBlob = await response.blob();
         const audioUrl = URL.createObjectURL(audioBlob);
         const audio = new Audio(audioUrl);
 
         audio.play().catch((error) => {
           console.error("Error playing audio:", error);
+          setIsGeneratingAnswer(false);
         });
 
-        // Clean up URL after playback
+        audio.addEventListener("play", () => {
+          setIsGeneratingAnswer(false);
+        });
+
         audio.addEventListener("ended", () => {
           URL.revokeObjectURL(audioUrl);
         });
       } else {
-        // If not audio, it might be JSON with error or answer text
         const data = await response.json();
         if (data.answer) {
           console.log("Answer:", data.answer);
-          // Could use browser TTS as fallback if needed
           if ("speechSynthesis" in window) {
             const utterance = new SpeechSynthesisUtterance(data.answer);
+
+            utterance.onstart = () => {
+              setIsGeneratingAnswer(false);
+            };
+
+            utterance.onerror = () => {
+              setIsGeneratingAnswer(false);
+            };
+
             window.speechSynthesis.speak(utterance);
+          } else {
+            setIsGeneratingAnswer(false);
           }
+        } else {
+          setIsGeneratingAnswer(false);
         }
       }
     } catch (error) {
       console.error("Error generating answer audio:", error);
+      setIsGeneratingAnswer(false);
     }
   };
 
   const saveEventToJSON = async (event) => {
-    // Extract the required fields: summary, transcript, title, timestamp, and file paths
     const eventData = {
       title: event.title || null,
       timestamp: event.timestamp || null,
@@ -574,7 +532,6 @@ function Recording() {
     };
 
     try {
-      // Send event data to backend to save to target.json
       const response = await fetch(`${API_BASE_URL}/save-event`, {
         method: "POST",
         headers: {
@@ -606,7 +563,7 @@ function Recording() {
         },
         body: JSON.stringify({
           query: message.trim(),
-          max_results: 1, // Get only the most relevant event
+          max_results: 1,
         }),
       });
 
@@ -620,10 +577,8 @@ function Recording() {
       const results = data.memory_nodes || [];
 
       if (results.length > 0) {
-        // Get the most relevant memory node (first result)
         const mostRelevantNode = results[0];
 
-        // Convert the memory node to an event format
         let metadata = {};
         try {
           metadata =
@@ -682,13 +637,10 @@ function Recording() {
           objects_detected: metadata.objects_detected || [],
         };
 
-        // Save event data to JSON file
         saveEventToJSON(event);
 
-        // Open the popup with the most relevant event
         setSelectedEvent(event);
 
-        // Generate answer and play audio
         generateAndPlayAnswer(
           message.trim(),
           fullSummary,
@@ -696,7 +648,6 @@ function Recording() {
           event.audio_path
         );
       } else {
-        // No results found
         alert("No relevant events found for your query.");
       }
     } catch (error) {
@@ -790,7 +741,7 @@ function Recording() {
           onClick={closeEventModal}
         >
           <div
-            className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[80vh] overflow-y-auto"
+            className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[80vh] overflow-y-auto relative"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between rounded-t-2xl">
@@ -801,7 +752,6 @@ function Recording() {
                 {selectedEvent.timestamp && (
                   <p className="text-sm text-gray-500 mt-1">
                     {(() => {
-                      // Ensure timestamp is treated as UTC
                       let utcTimestamp = selectedEvent.timestamp;
                       if (
                         !utcTimestamp.endsWith("Z") &&
@@ -812,7 +762,6 @@ function Recording() {
                           utcTimestamp.replace(/\.\d{3,6}/, "") + "Z";
                       }
 
-                      // Parse as UTC and format in EST/EDT
                       const date = new Date(utcTimestamp);
                       const formatter = new Intl.DateTimeFormat("en-US", {
                         month: "2-digit",
@@ -851,7 +800,6 @@ function Recording() {
             </div>
             <div className="p-6">
               <div className="flex gap-6">
-                {/* Left Column: Video and Audio */}
                 {(selectedEvent.video_path || selectedEvent.audio_path) && (
                   <div className="flex-shrink-0 w-1/2 flex flex-col gap-6">
                     {selectedEvent.video_path && (
@@ -890,7 +838,6 @@ function Recording() {
                   </div>
                 )}
 
-                {/* Right Column: Summary, Transcript, Objects */}
                 <div
                   className={`flex-1 ${
                     selectedEvent.video_path || selectedEvent.audio_path
@@ -930,11 +877,53 @@ function Recording() {
                         <p className="text-black italic">Loading Summary...</p>
                       </div>
                     ) : (
-                      <div className="text-black leading-relaxed break-words whitespace-pre-line">
-                        {formatSummary(
-                          selectedEvent.summary ||
-                            "No summary available for this event."
-                        )}
+                      <div className="text-black leading-relaxed break-words">
+                        <ReactMarkdown
+                          components={{
+                            h1: ({ node, ...props }) => (
+                              <h1
+                                className="text-2xl font-bold mb-3 mt-4"
+                                {...props}
+                              />
+                            ),
+                            h2: ({ node, ...props }) => (
+                              <h2
+                                className="text-xl font-bold mb-2 mt-3"
+                                {...props}
+                              />
+                            ),
+                            h3: ({ node, ...props }) => (
+                              <h3
+                                className="text-lg font-bold mb-2 mt-3"
+                                {...props}
+                              />
+                            ),
+                            p: ({ node, ...props }) => (
+                              <p className="mb-2" {...props} />
+                            ),
+                            strong: ({ node, ...props }) => (
+                              <strong className="font-bold" {...props} />
+                            ),
+                            ul: ({ node, ...props }) => (
+                              <ul
+                                className="list-disc list-inside mb-2 space-y-1"
+                                {...props}
+                              />
+                            ),
+                            ol: ({ node, ...props }) => (
+                              <ol
+                                className="list-decimal list-inside mb-2 space-y-1"
+                                {...props}
+                              />
+                            ),
+                            li: ({ node, ...props }) => (
+                              <li className="ml-4" {...props} />
+                            ),
+                          }}
+                        >
+                          {selectedEvent.summary ||
+                            "No summary available for this event."}
+                        </ReactMarkdown>
                       </div>
                     )}
                   </div>
@@ -973,6 +962,32 @@ function Recording() {
                 </div>
               </div>
             </div>
+
+            {isGeneratingAnswer && (
+              <div className="absolute bottom-4 left-4 flex items-center gap-2 text-sm text-gray-600 bg-white/95 backdrop-blur-sm px-3 py-2 rounded-lg shadow-md border border-gray-200 z-10">
+                <svg
+                  className="animate-spin h-4 w-4 text-primary-600"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  ></circle>
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  ></path>
+                </svg>
+                <span className="font-medium">Generating answer...</span>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -2,7 +2,6 @@ import sqlite3
 import logging
 import os
 
-# Get the directory where this file is located
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE_DIR, "data", "app.db")
 SCHEMA_PATH = os.path.join(BASE_DIR, "db", "schema.sql")
@@ -13,7 +12,6 @@ def get_connection():
     return conn
 
 def init_db():
-    # Ensure data folder exists
     data_dir = os.path.join(BASE_DIR, "data")
     if not os.path.exists(data_dir):
         os.makedirs(data_dir)
@@ -44,7 +42,6 @@ def search_events(keyword):
     """, (f"%{keyword}%",)).fetchall()
     return [dict(row) for row in rows]
 
-# MemoryNode functions
 def create_memory_node(file_path, file_type, timestamp, metadata=None):
     """
     Create a new MemoryNode in the database.
@@ -191,7 +188,6 @@ def cleanup_orphaned_memory_nodes():
     deleted_ids = []
     
     try:
-        # Get all memory nodes
         rows = conn.execute("SELECT * FROM memory_nodes").fetchall()
         
         for row in rows:
@@ -199,7 +195,6 @@ def cleanup_orphaned_memory_nodes():
             node_id = node['id']
             file_path = node.get('file_path', '')
             
-            # Parse metadata to check all referenced files
             metadata = {}
             try:
                 metadata_str = node.get('metadata', '{}') or '{}'
@@ -207,39 +202,27 @@ def cleanup_orphaned_memory_nodes():
             except:
                 pass
             
-            # Check if primary file_path exists
             primary_exists = os.path.exists(file_path) if file_path else False
             
-            # Check all files referenced in metadata
             video_path = metadata.get('video_path')
             audio_path = metadata.get('audio_path')
             transcript_path = metadata.get('transcript_path')
             thumbnail_path = metadata.get('thumbnail_path')
             
-            # If we have video_path in metadata, prefer that over file_path
             primary_path = video_path or file_path
             
-            # Check if any required files exist
             video_exists = os.path.exists(video_path) if video_path else False
             audio_exists = os.path.exists(audio_path) if audio_path else False
             transcript_exists = os.path.exists(transcript_path) if transcript_path else False
             
-            # Delete the node if:
-            # 1. Primary path doesn't exist, OR
-            # 2. Video path is specified but doesn't exist, OR
-            # 3. Both video and transcript don't exist (both are typically required for a complete event)
             should_delete = False
             
             if primary_path:
-                # If we have a primary path, check if it exists
                 if not os.path.exists(primary_path):
                     should_delete = True
             else:
-                # If no primary path, check if we have any valid files
-                # If we have a video_path in metadata but it doesn't exist, delete
                 if video_path and not video_exists:
                     should_delete = True
-                # If no video_path but no files exist, delete
                 elif not video_path and not (audio_exists or transcript_exists):
                     should_delete = True
             

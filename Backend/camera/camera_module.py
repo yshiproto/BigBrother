@@ -20,9 +20,8 @@ import json
 
 import cv2
 
-# --- Dependency Imports & Fallbacks ---
 
-try:  # Database helper
+try:
     from db.database import add_event, create_memory_node
 except (ImportError, ModuleNotFoundError):
     add_event = None
@@ -51,12 +50,10 @@ def _import_gemini_helpers() -> (Callable[[str], str], Callable[[str], str], Cal
         return "Video summary unavailable"
     
     def _fallback_generate_title(text: str) -> str:
-        # Simple title generation: take first 50 characters of text
         if not text or len(text.strip()) == 0:
             return "Recording"
         text = text.strip()
         if len(text) > 50:
-            # Find last space before 50 characters
             last_space = text[:47].rfind(' ')
             if last_space > 20:
                 return text[:last_space] + "..."
@@ -71,13 +68,11 @@ def _generate_title_from_transcript(transcript: str, generate_title_fn: Callable
     if not transcript or len(transcript.strip()) == 0:
         return "Recording"
     
-    # Use Gemini to generate title if available
     try:
         title = generate_title_fn(transcript)
         return title
     except Exception as e:
         logging.warning(f"Failed to generate title with Gemini: {e}. Using simple truncation.")
-        # Fallback to simple truncation
         text = transcript.strip()
         if len(text) > 50:
             last_space = text[:47].rfind(' ')
@@ -92,12 +87,10 @@ def _import_audio_helpers():
     try:
         from audio import recorder, transcribe_audio, save_transcript
         
-        # Verify recorder instance exists and is usable
         if recorder is None:
             logging.error("✗ Audio recorder is None - audio recording will be disabled")
             return None, None, None
             
-        # Test if recorder has the required methods
         if not hasattr(recorder, 'start_recording') or not hasattr(recorder, 'stop_recording'):
             logging.error("✗ Audio recorder missing required methods - audio recording will be disabled")
             return None, None, None
@@ -141,8 +134,6 @@ def analyze_and_log_video(
     try:
         logging.info(f"Starting analysis for {video_path}...")
         
-        # For YOLO and initial description, we can still use the first frame.
-        # This provides a quick preview/thumbnail.
         cap = cv2.VideoCapture(video_path)
         ret, frame = cap.read()
         cap.release()
@@ -156,8 +147,6 @@ def analyze_and_log_video(
         first_frame_path = image_dir / first_frame_filename
         cv2.imwrite(str(first_frame_path), frame)
 
-        # --- AI Analysis ---
-        # 1. YOLO object detection on the first frame
         objects = []
         if yolo_model:
             try:
@@ -168,14 +157,12 @@ def analyze_and_log_video(
             except Exception as e:
                 logging.error(f"YOLO prediction failed: {e}")
 
-        # 2. Gemini video summarization
         summary = ""
         try:
             summary = summarize_video(video_path)
         except Exception as e:
             logging.error(f"Gemini video summary failed: {e}")
 
-        # --- Event Logging ---
         desc_parts = []
         if objects:
             desc_parts.append(f"Objects detected: {', '.join(objects)}")
@@ -192,31 +179,25 @@ def analyze_and_log_video(
                     event_type="video_recording",
                     timestamp=ts_utc.isoformat(),
                     description=description,
-                    image_path=video_path, # The path to the video file
+                    image_path=video_path,
                 )
             except Exception as e:
                 logging.error(f"Failed to save video event to database: {e}")
         
-        # Create or update unified MemoryNode with all data (video, audio, summary, transcript)
         if create_memory_node:
             try:
                 from db.database import get_memory_node_by_file_path, update_memory_node_metadata
                 
-                # Check if MemoryNode already exists (might have been created by transcript thread)
                 existing_node = get_memory_node_by_file_path(video_path)
                 
                 if existing_node:
-                    # Update existing MemoryNode with video analysis data
                     try:
                         existing_metadata = json.loads(existing_node.get('metadata', '{}') or '{}')
                     except:
                         existing_metadata = {}
                     
-                    # Update with video analysis data (summary, objects, etc.)
                     existing_metadata['video_path'] = video_path
-                    existing_metadata['summary'] = summary  # Replace "Loading Summary..." with actual summary
-                    
-                    # Generate title from summary if we have summary and no title yet
+                    existing_metadata['summary'] = summary
                     if summary and generate_title and not existing_metadata.get('title'):
                         try:
                             title = _generate_title_from_transcript(summary, generate_title)
@@ -234,13 +215,11 @@ def analyze_and_log_video(
                     if transcript:
                         existing_metadata['transcript'] = transcript
                     
-                    # Update the node
                     if update_memory_node_metadata(existing_node['id'], existing_metadata):
                         logging.info(f"✓ Updated existing MemoryNode {existing_node['id']} with video analysis data")
                     else:
                         logging.error(f"✗ Failed to update existing MemoryNode {existing_node['id']}")
                 else:
-                    # Create new MemoryNode with all available data
                     metadata = {
                         "video_path": video_path,
                         "audio_path": audio_path,
@@ -252,8 +231,8 @@ def analyze_and_log_video(
                         "thumbnail_path": str(first_frame_path)
                     }
                     create_memory_node(
-                        file_path=video_path,  # Use video path as primary file path
-                        file_type="recording",   # Changed to "recording" to indicate it's a complete recording session
+                        file_path=video_path,
+                        file_type="recording",
                         timestamp=ts_utc.isoformat(),
                         metadata=json.dumps(metadata)
                     )
@@ -265,7 +244,6 @@ def analyze_and_log_video(
         logging.critical(f"An error occurred during video analysis for {video_path}: {e}", exc_info=True)
 
 
-# --- Main Camera Loop ---
 
 def run_camera_loop(
     camera_index: int,
@@ -293,11 +271,8 @@ def run_camera_loop(
     describe_image, summarize_video, generate_title_fn = _import_gemini_helpers()
     audio_recorder, transcribe_audio, save_transcript = _import_audio_helpers()
     
-    # Log audio recorder status and test microphone access
     if audio_recorder:
         logging.info("✓ Audio recorder initialized successfully")
-        
-        # Test microphone access by checking available devices
         try:
             import sounddevice as sd
             devices = sd.query_devices()
@@ -308,7 +283,6 @@ def run_camera_loop(
             if default_input:
                 logging.info(f"Default input device: {default_input['name']} (channels: {default_input['max_input_channels']})")
             
-            # Check if we can query the default input device (basic permission check)
             try:
                 test_query = sd.query_devices(kind='input')
                 logging.info("✓ Microphone device query successful - permissions appear OK")
@@ -323,15 +297,12 @@ def run_camera_loop(
     else:
         logging.warning("✗ Audio recorder not available - audio recording will be disabled")
     
-    # Use a deque to store recent motion levels
-    motion_history_length = int(processing_fps * 2)  # Store 2 seconds of motion data
+    motion_history_length = int(processing_fps * 2)
     motion_history: Deque[float] = deque(maxlen=motion_history_length)
     
     image_dir.mkdir(parents=True, exist_ok=True)
-    # Create a directory for video recordings
     recording_dir = image_dir.parent / "recordings"
     recording_dir.mkdir(parents=True, exist_ok=True)
-    # Create directories for audio recordings and transcripts
     audio_dir = image_dir.parent / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
     transcript_dir = image_dir.parent / "transcripts"
@@ -339,12 +310,10 @@ def run_camera_loop(
 
     def _open_capture() -> cv2.VideoCapture:
         """Opens, configures, and primes the video capture device."""
-        # Use CAP_AVFOUNDATION for better macOS compatibility
         cap = cv2.VideoCapture(camera_index, cv2.CAP_AVFOUNDATION)
         if not cap.isOpened():
             raise RuntimeError(f"FATAL: Unable to open webcam at index {camera_index}")
 
-        # Apply requested settings
         if capture_width:
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, capture_width)
         if capture_height:
@@ -352,22 +321,19 @@ def run_camera_loop(
         if capture_fps:
             cap.set(cv2.CAP_PROP_FPS, capture_fps)
         
-        # Log the actual negotiated settings
         actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         actual_fps = cap.get(cv2.CAP_PROP_FPS)
         logging.info(f"Camera opened: {camera_index} @ {actual_w}x{actual_h}, {actual_fps:.2f} FPS")
         
-        # --- Priming Loop ---
         logging.info("Priming camera stream...")
-        for i in range(30): # Try for ~3 seconds
+        for i in range(30):
             ret, _ = cap.read()
             if ret:
                 logging.info(f"Stream is live after {i + 1} attempts.")
                 return cap
             time.sleep(0.1)
 
-        # If priming fails, release the resource and raise an error.
         cap.release()
         raise RuntimeError("FATAL: Camera opened but failed to start streaming.")
 
@@ -376,10 +342,8 @@ def run_camera_loop(
     last_motion_time = None
     video_writer = None
     consecutive_failures = 0
-    audio_path = None  # Track current audio recording path
-    current_timestamp_str = None  # Track timestamp for current recording
-    
-    # We need two frames for comparison
+    audio_path = None
+    current_timestamp_str = None
     prev_gray_frame = None
     
     logging.info(f"Starting motion detection loop at ~{processing_fps:.1f} FPS.")
@@ -395,17 +359,15 @@ def run_camera_loop(
                 if consecutive_failures >= max_frame_failures:
                     logging.error("Exceeded max frame failures. Aborting.")
                     break
-                # Attempt to recover by re-opening the capture device
                 cap.release()
                 try:
                     cap = _open_capture()
-                    consecutive_failures = 0 # Reset on successful reopen
+                    consecutive_failures = 0
                 except RuntimeError as e:
                     logging.error(f"Failed to reopen camera: {e}. Retrying in 5s.")
                     time.sleep(5)
                 continue
 
-            # --- Motion Detection Logic ---
             small_frame = cv2.resize(frame, (640, 480))
             gray_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
             gray_frame = cv2.GaussianBlur(gray_frame, (21, 21), 0)
@@ -419,19 +381,13 @@ def run_camera_loop(
             thresh = cv2.dilate(thresh, None, iterations=2)
             contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
-            # Update the previous frame for the next iteration
             prev_gray_frame = gray_frame
 
-            # Calculate a "motion level" for the current frame
             total_contour_area = sum(cv2.contourArea(c) for c in contours)
             motion_history.append(total_contour_area)
-            
-            # Determine if significant motion is happening based on history
-            # We consider motion to be happening if the average contour area is above our min threshold
             avg_motion = sum(motion_history) / len(motion_history) if motion_history else 0
             motion_detected = avg_motion > min_contour_area
             
-            # Update status via callback if provided
             if status_callback:
                 try:
                     status_callback(motion_detected, is_recording, avg_motion)
@@ -441,37 +397,31 @@ def run_camera_loop(
             if motion_detected:
                 last_motion_time = time.monotonic()
                 if not is_recording:
-                    # --- Start of a new recording ---
                     is_recording = True
                     ts_utc = datetime.utcnow()
                     current_timestamp_str = ts_utc.strftime('%Y%m%d_%H%M%S')
                     video_filename = f"motion_{current_timestamp_str}.mp4"
                     video_path = str(recording_dir / video_filename)
                     
-                    # Get frame dimensions for VideoWriter
                     frame_height, frame_width, _ = frame.shape
                     
-                    # Define the codec and create VideoWriter object
                     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
                     video_writer = cv2.VideoWriter(video_path, fourcc, capture_fps or processing_fps, (frame_width, frame_height))
                     
-                    # Start audio recording
                     if audio_recorder:
                         audio_filename = f"motion_{current_timestamp_str}.wav"
                         audio_path = str(audio_dir / audio_filename)
                         
-                        # Check recorder status before starting
                         try:
                             recorder_status = audio_recorder.get_status()
                             logging.info(f"Audio recorder status before start: {recorder_status}")
                             
-                            # If already recording, stop it first (this shouldn't happen but handle it)
                             if recorder_status.get('is_recording', False):
                                 logging.warning("⚠ Recorder was already recording, stopping first...")
                                 try:
                                     stop_result, stop_code = audio_recorder.stop_recording()
                                     logging.info(f"Stopped previous recording: {stop_result}, status: {stop_code}")
-                                    time.sleep(0.5)  # Brief pause before starting new recording
+                                    time.sleep(0.5)
                                 except Exception as e:
                                     logging.error(f"Error stopping previous recording: {e}", exc_info=True)
                         except Exception as e:
@@ -482,7 +432,6 @@ def run_camera_loop(
                             result, status_code = audio_recorder.start_recording(audio_path)
                             if status_code == 200:
                                 logging.info(f"✓ Audio recording started successfully: {audio_path}")
-                                # Verify recorder status after starting
                                 try:
                                     after_status = audio_recorder.get_status()
                                     logging.info(f"Recorder status after start: {after_status}")
@@ -510,15 +459,12 @@ def run_camera_loop(
                 if video_writer:
                     video_writer.write(frame)
 
-                # Check for inactivity to stop recording
-                # Inactivity is now defined as a lack of significant motion for the timeout period
                 if time.monotonic() - (last_motion_time or 0) > inactivity_timeout:
                     logging.info(f"Motion level below threshold for {inactivity_timeout}s. Stopping recording: {video_path}")
                     is_recording = False
                     
-                    # Stop audio recording
                     current_audio_path = audio_path
-                    current_video_path = video_path  # Capture video_path before releasing
+                    current_video_path = video_path
                     timestamp_for_transcript = current_timestamp_str if current_timestamp_str else datetime.utcnow().strftime('%Y%m%d_%H%M%S')
                     
                     logging.info(f"Stopping recording - audio_path: {current_audio_path}, audio_recorder available: {audio_recorder is not None}")
@@ -529,7 +475,6 @@ def run_camera_loop(
                             result, status_code = audio_recorder.stop_recording()
                             if status_code == 200:
                                 logging.info(f"✓ Audio recording stopped successfully: {current_audio_path}")
-                                # Check if file exists
                                 import os
                                 if os.path.exists(current_audio_path):
                                     file_size = os.path.getsize(current_audio_path)
@@ -546,18 +491,16 @@ def run_camera_loop(
                         if not current_audio_path:
                             logging.warning("✗ No audio path set - audio was not recorded")
                     
-                    # IMMEDIATELY create MemoryNode with "Loading Summary..." placeholder
-                    # This ensures the event appears in Timeline.js right away
                     if create_memory_node and current_video_path:
                         try:
                             ts_utc = datetime.utcnow()
                             metadata = {
                                 "video_path": current_video_path,
                                 "audio_path": current_audio_path,
-                                "transcript_path": None,  # Will be set when transcription completes
-                                "summary": "Loading Summary...",  # Placeholder until Gemini finishes
-                                "transcript": None,  # Will be set when transcription completes
-                                "title": None,  # Will be generated from transcript
+                                "transcript_path": None,
+                                "summary": "Loading Summary...",
+                                "transcript": None,
+                                "title": None,
                                 "objects_detected": [],
                                 "description": "Motion detected - processing...",
                             }
@@ -571,22 +514,18 @@ def run_camera_loop(
                         except Exception as e:
                             logging.error(f"✗ Failed to create immediate MemoryNode: {e}", exc_info=True)
                     
-                    # Transcribe audio if we have a valid audio file
                     if current_audio_path and os.path.exists(current_audio_path):
-                        # Transcribe audio in a separate thread
                         def transcribe_and_save():
                             try:
                                 logging.info(f"Starting transcription for: {current_audio_path}")
                                 transcript, timestamp = transcribe_audio(current_audio_path)
                                 
-                                # Log the full transcript for the corresponding video
                                 logging.info("=" * 80)
                                 logging.info(f"TRANSCRIPT FOR VIDEO: {current_video_path}")
                                 logging.info("=" * 80)
                                 logging.info(transcript if transcript else "[No transcript generated]")
                                 logging.info("=" * 80)
                                 
-                                # Save transcript to file with matching timestamp
                                 transcript_filename = f"motion_{timestamp_for_transcript}.txt"
                                 transcript_path = str(transcript_dir / transcript_filename)
                                 transcript_saved = save_transcript(transcript, timestamp, transcript_path)
@@ -596,7 +535,6 @@ def run_camera_loop(
                                 else:
                                     logging.error(f"Failed to save transcript: {transcript_path}")
                                 
-                                # Generate title from transcript
                                 title = None
                                 if transcript and generate_title_fn:
                                     try:
@@ -604,9 +542,6 @@ def run_camera_loop(
                                         logging.info(f"Generated title from transcript: {title}")
                                     except Exception as e:
                                         logging.warning(f"Failed to generate title from transcript: {e}")
-                                
-                                # Update or create MemoryNode with transcript data
-                                # We need to either update existing MemoryNode or create one if it doesn't exist yet
                                 if create_memory_node and current_video_path and transcript:
                                     try:
                                         from db.database import (
@@ -615,9 +550,8 @@ def run_camera_loop(
                                             create_memory_node as create_node
                                         )
                                         
-                                        # Wait for MemoryNode to be created (with retries)
-                                        max_retries = 3  # Should exist from immediate creation
-                                        retry_delay = 2.0  # 2 seconds between retries
+                                        max_retries = 3
+                                        retry_delay = 2.0
                                         video_node = None
                                         
                                         logging.info(f"Looking for MemoryNode to update with transcript: {current_video_path}")
@@ -632,25 +566,21 @@ def run_camera_loop(
                                                 time.sleep(retry_delay)
                                         
                                         if video_node:
-                                            # Get existing metadata
                                             try:
                                                 existing_metadata = json.loads(video_node.get('metadata', '{}') or '{}')
                                             except:
                                                 existing_metadata = {}
                                             
-                                            # Update with transcript data and title
                                             existing_metadata['transcript'] = transcript
                                             existing_metadata['transcript_path'] = transcript_path
                                             existing_metadata['audio_path'] = current_audio_path
                                             if title:
                                                 existing_metadata['title'] = title
                                             
-                                            # Update the node
                                             if update_memory_node_metadata(video_node['id'], existing_metadata):
                                                 logging.info(f"✓ Successfully updated MemoryNode {video_node['id']} with transcript ({len(transcript)} characters)")
                                                 
-                                                # Verify the update worked
-                                                time.sleep(0.5)  # Brief pause before verification
+                                                time.sleep(0.5)
                                                 updated_node = get_memory_node_by_file_path(current_video_path)
                                                 if updated_node:
                                                     try:
@@ -666,16 +596,13 @@ def run_camera_loop(
                                             else:
                                                 logging.error(f"✗ Failed to update MemoryNode {video_node['id']} with transcript")
                                         else:
-                                            # MemoryNode doesn't exist yet - create it with transcript
                                             logging.warning(f"⚠ MemoryNode not found after {max_retries} attempts. Creating new one with transcript.")
                                             try:
-                                                # Create a basic MemoryNode with transcript
-                                                # The video summary will be added later by analyze_and_log_video
                                                 metadata = {
                                                     "video_path": current_video_path,
                                                     "audio_path": current_audio_path,
                                                     "transcript_path": transcript_path,
-                                                    "summary": None,  # Will be updated later
+                                                    "summary": None,
                                                     "transcript": transcript,
                                                     "objects_detected": [],
                                                     "description": "Recording with transcript",
@@ -708,8 +635,6 @@ def run_camera_loop(
                     if video_writer:
                         video_writer.release()
                         
-                        # Start analysis in a new thread
-                        # Pass audio_path and transcript_path so we can create unified MemoryNode
                         analysis_thread = threading.Thread(
                             target=analyze_and_log_video,
                             args=(
@@ -718,9 +643,9 @@ def run_camera_loop(
                                 describe_image,
                                 summarize_video,
                                 image_dir,
-                                current_audio_path,  # audio_path
-                                None,  # transcript_path (will be set later)
-                                None,  # transcript (will be set later)
+                                current_audio_path,
+                                None,
+                                None,
                             ),
                             daemon=True,
                         )
@@ -730,41 +655,34 @@ def run_camera_loop(
                     audio_path = None
                     current_timestamp_str = None
             
-            # --- Frame Rate Control ---
             elapsed = time.monotonic() - read_start_time
             sleep_time = (1.0 / processing_fps) - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
     finally:
-        # If there's an active recording when stop is called, finish it properly
         if is_recording and video_writer:
             logging.info("Finishing active recording before shutdown...")
             current_audio_path = audio_path
             current_video_path = video_path
             timestamp_for_transcript = current_timestamp_str if current_timestamp_str else datetime.utcnow().strftime('%Y%m%d_%H%M%S')
             
-            # Stop audio recording if active
             if audio_recorder and current_audio_path:
                 try:
                     result, status_code = audio_recorder.stop_recording()
                     if status_code == 200:
                         logging.info(f"Audio recording stopped on exit: {current_audio_path}")
-                        
-                        # Transcribe audio in a separate thread (non-daemon so it can finish)
                         def transcribe_and_save():
                             try:
                                 logging.info(f"Starting transcription for: {current_audio_path}")
                                 transcript, timestamp = transcribe_audio(current_audio_path)
                                 
-                                # Log the full transcript for the corresponding video
                                 logging.info("=" * 80)
                                 logging.info(f"TRANSCRIPT FOR VIDEO: {current_video_path}")
                                 logging.info("=" * 80)
                                 logging.info(transcript if transcript else "[No transcript generated]")
                                 logging.info("=" * 80)
                                 
-                                # Save transcript to file with matching timestamp
                                 transcript_filename = f"motion_{timestamp_for_transcript}.txt"
                                 transcript_path = str(transcript_dir / transcript_filename)
                                 transcript_saved = save_transcript(transcript, timestamp, transcript_path)
@@ -774,7 +692,6 @@ def run_camera_loop(
                                 else:
                                     logging.error(f"Failed to save transcript: {transcript_path}")
                                 
-                                # Generate title from transcript
                                 title = None
                                 if transcript and generate_title_fn:
                                     try:
@@ -783,7 +700,6 @@ def run_camera_loop(
                                     except Exception as e:
                                         logging.warning(f"Failed to generate title from transcript: {e}")
                                 
-                                # Update or create MemoryNode with transcript data
                                 if create_memory_node and current_video_path and transcript:
                                     try:
                                         from db.database import (
@@ -792,7 +708,6 @@ def run_camera_loop(
                                             create_memory_node as create_node
                                         )
                                         
-                                        # Wait for MemoryNode to be created (with retries)
                                         max_retries = 15
                                         retry_delay = 2.0
                                         video_node = None
@@ -821,12 +736,11 @@ def run_camera_loop(
                                             if update_memory_node_metadata(video_node['id'], existing_metadata):
                                                 logging.info(f"✓ Successfully updated MemoryNode {video_node['id']} with transcript ({len(transcript)} characters)")
                                         else:
-                                            # Create MemoryNode with transcript
                                             metadata = {
                                                     "video_path": current_video_path,
                                                     "audio_path": current_audio_path,
                                                     "transcript_path": transcript_path,
-                                                    "summary": "Loading Summary...",  # Will be updated later
+                                                    "summary": "Loading Summary...",
                                                     "transcript": transcript,
                                                     "title": title,
                                                     "objects_detected": [],
@@ -851,11 +765,9 @@ def run_camera_loop(
                 except Exception as e:
                     logging.warning(f"Error stopping audio recording on exit: {e}")
             
-            # Release video writer and start analysis
             if video_writer:
                 video_writer.release()
                 
-                # Start analysis in a new thread (non-daemon so it can finish)
                 analysis_thread = threading.Thread(
                     target=analyze_and_log_video,
                     args=(
@@ -865,15 +777,14 @@ def run_camera_loop(
                         summarize_video,
                         image_dir,
                         current_audio_path,
-                        None,  # transcript_path (will be set later)
-                        None,  # transcript (will be set later)
+                        None,
+                        None,
                     ),
                     daemon=False,
                 )
                 analysis_thread.start()
                 logging.info(f"Video analysis started for: {current_video_path}")
         
-        # Stop audio recording if still active (but no video writer)
         if audio_recorder and audio_path:
             try:
                 audio_recorder.stop_recording()
@@ -883,7 +794,7 @@ def run_camera_loop(
         
         if 'cap' in locals() and cap.isOpened():
             cap.release()
-        if video_writer: # Ensure writer is released on exit
+        if video_writer:
             video_writer.release()
         logging.info("Camera loop stopped.")
 
@@ -906,7 +817,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     stop_event = threading.Event()
     
-    # Set up a thread to listen for Ctrl+C
     def signal_handler():
         try:
             input("Press Enter or Ctrl+C to stop...\n")

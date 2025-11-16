@@ -21,12 +21,10 @@ class CameraService:
         self.is_running = False
         self.lock = threading.Lock()
         
-        # Status tracking for motion and recording
         self.motion_detected = False
         self.is_currently_recording = False
         self.last_motion_level = 0.0
         
-        # Default camera settings
         self.camera_index = 0
         self.processing_fps = 10.0
         self.min_contour_area = 2000
@@ -37,7 +35,6 @@ class CameraService:
         self.inactivity_timeout = 5.0
         self.delta_thresh = 50
         
-        # Get base directory for data storage
         base_dir = Path(__file__).resolve().parents[1]
         self.image_dir = base_dir / "data" / "images"
     
@@ -47,7 +44,6 @@ class CameraService:
             if self.is_running:
                 return {"error": "Camera service is already running"}, 400
             
-            # Update settings from kwargs if provided
             self.camera_index = kwargs.get("camera_index", self.camera_index)
             self.processing_fps = kwargs.get("fps", self.processing_fps)
             self.min_contour_area = kwargs.get("min_area", self.min_contour_area)
@@ -57,11 +53,8 @@ class CameraService:
             self.max_frame_failures = kwargs.get("max_frame_failures", self.max_frame_failures)
             self.inactivity_timeout = kwargs.get("inactivity_timeout", self.inactivity_timeout)
             self.delta_thresh = kwargs.get("delta_thresh", self.delta_thresh)
-            
-            # Create stop event
             self.stop_event = threading.Event()
             
-            # Create and start camera thread
             self.camera_thread = threading.Thread(
                 target=self._run_camera_loop,
                 daemon=True,
@@ -83,12 +76,8 @@ class CameraService:
             if not self.is_running:
                 return {"error": "Camera service is not running"}, 400
             
-            # Signal stop (thread will finish processing and exit)
             if self.stop_event:
                 self.stop_event.set()
-            
-            # Mark as not running immediately, but let thread finish cleanup
-            # The thread will reset state in its finally block
             self.is_running = False
             
             logger.info("Stop signal sent to camera service (thread will finish processing)")
@@ -120,7 +109,6 @@ class CameraService:
     def _run_camera_loop(self):
         """Internal method to run the camera loop"""
         try:
-            # Create status callback to update service state
             def status_callback(motion_detected: bool, is_recording: bool, motion_level: float):
                 self.update_status(motion_detected, is_recording, motion_level)
             
@@ -143,14 +131,12 @@ class CameraService:
         finally:
             with self.lock:
                 self.is_running = False
-                # Reset status when loop stops
                 self.motion_detected = False
                 self.is_currently_recording = False
                 self.last_motion_level = 0.0
                 logger.info("Camera loop thread finished and cleaned up")
 
 
-# Global camera service instance
 _camera_service: Optional[CameraService] = None
 
 

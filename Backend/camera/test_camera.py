@@ -19,7 +19,6 @@ def main():
     camera_index = args.camera_index
     print(f"Attempting to open camera at index: {camera_index}")
 
-    # Use CAP_AVFOUNDATION for better macOS compatibility
     cap = cv2.VideoCapture(camera_index, cv2.CAP_AVFOUNDATION)
 
     if not cap.isOpened():
@@ -27,13 +26,8 @@ def main():
         print("Please check camera permissions and that the index is correct.")
         return 1
 
-    print("Camera opened successfully. Priming stream...")
-
-    # --- Priming Loop ---
-    # Some cameras (especially virtual/Continuity) need a moment to start streaming.
-    # We'll try to read a frame for a few seconds before giving up.
     primed = False
-    for i in range(30): # Try for ~3 seconds
+    for i in range(30):
         ret, _ = cap.read()
         if ret:
             print(f"Stream is live after {i + 1} attempts.")
@@ -51,23 +45,18 @@ def main():
     window_name = f"Camera Test (Index: {camera_index})"
 
     while True:
-        # Read a frame from the camera
         ret, frame = cap.read()
 
-        # If the frame was not read successfully, print an error and break the loop
         if not ret:
             print("Error: Failed to grab frame. The camera may have been disconnected.")
             break
 
-        # Display the resulting frame
         cv2.imshow(window_name, frame)
 
-        # Wait for 1ms and check if the 'q' key was pressed
         if cv2.waitKey(1) & 0xFF == ord('q'):
             print("'q' pressed. Exiting.")
             break
 
-    # When everything is done, release the capture and destroy windows
     cap.release()
     cv2.destroyAllWindows()
     print("Resources released.")

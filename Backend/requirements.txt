@@ -3,7 +3,6 @@ flask-cors
 opencv-python
 pyaudio
 webrtcvad
-openai-whisper
 ultralytics
 sounddevice
 soundfile

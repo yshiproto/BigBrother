@@ -13,13 +13,13 @@ from typing import Optional, List, Dict
 
 try:
     from dotenv import load_dotenv
-except Exception:  # pragma: no cover - optional helper
-    load_dotenv = None  # type: ignore
+except Exception:
+    load_dotenv = None
 
 try:
     import google.generativeai as genai
-except Exception as exc:  # pragma: no cover - optional dependency
-    genai = None  # type: ignore
+except Exception as exc:
+    genai = None
     _IMPORT_ERROR = exc
 else:
     _IMPORT_ERROR = None
@@ -96,14 +96,13 @@ def describe_image(image_path: str, prompt: Optional[str] = None, timeout: int =
             [instruction, {"mime_type": mime_type, "data": image_bytes}],
             request_options={"timeout": timeout},
         )
-    except Exception as exc:  # pragma: no cover - surface Gemini errors
+    except Exception as exc:
         raise RuntimeError(f"Gemini image caption failed: {exc}") from exc
 
     caption = getattr(response, "text", None)
     if caption:
         return caption.strip()
 
-    # Some responses only populate candidates
     if hasattr(response, "candidates"):
         for candidate in response.candidates or []:
             if not candidate.content or not getattr(candidate.content, "parts", None):
@@ -141,7 +140,6 @@ def summarize_video(video_path: str, prompt: Optional[str] = None, timeout: int 
     LOGGER.info(f"Uploading video for analysis: {path.name}")
     video_file = genai.upload_file(path=path)
 
-    # Wait for the video to be processed
     while video_file.state.name == "PROCESSING":
         time.sleep(10)
         video_file = genai.get_file(video_file.name)
@@ -157,12 +155,10 @@ def summarize_video(video_path: str, prompt: Optional[str] = None, timeout: int 
             request_options={"timeout": timeout},
         )
     except Exception as exc:
-        # Clean up the uploaded file on error
         genai.delete_file(video_file.name)
         LOGGER.error(f"Gemini video summary failed: {exc}", exc_info=True)
         raise RuntimeError(f"Gemini video summary failed: {exc}") from exc
 
-    # Clean up the uploaded file
     genai.delete_file(video_file.name)
     LOGGER.info(f"Cleaned up uploaded file: {video_file.name}")
 
@@ -190,7 +186,6 @@ def search_memory_nodes(query: str, memory_nodes: List[Dict], max_results: int =
     
     model = _get_model()
     
-    # Format MemoryNodes for Gemini
     nodes_text = "MemoryNodes:\n"
     for i, node in enumerate(memory_nodes):
         metadata_str = ""
@@ -243,7 +238,6 @@ Example response: [5, 12, 3]"""
         
         response_text = getattr(response, "text", None)
         if not response_text:
-            # Try to extract from candidates
             if hasattr(response, "candidates"):
                 for candidate in response.candidates or []:
                     if not candidate.content or not getattr(candidate.content, "parts", None):
@@ -255,8 +249,6 @@ Example response: [5, 12, 3]"""
                             break
         
         if response_text:
-            # Try to parse JSON array from response
-            # Remove markdown code blocks if present
             response_text = response_text.strip()
             if response_text.startswith("```"):
                 lines = response_text.split("\n")
@@ -264,18 +256,14 @@ Example response: [5, 12, 3]"""
             elif response_text.startswith("`"):
                 response_text = response_text.strip("`")
             
-            # Extract JSON array
             json_match = re.search(r'\[[\d\s,]+\]', response_text)
             if json_match:
                 node_ids = json.loads(json_match.group())
             else:
-                # Try to parse the whole response as JSON
                 node_ids = json.loads(response_text)
             
-            # Create a mapping of node IDs to nodes
             node_map = {node['id']: node for node in memory_nodes}
             
-            # Return nodes in the order specified by Gemini
             results = []
             for node_id in node_ids:
                 if node_id in node_map:
@@ -285,7 +273,6 @@ Example response: [5, 12, 3]"""
         
     except Exception as exc:
         LOGGER.error(f"Gemini memory node search failed: {exc}", exc_info=True)
-        # Fallback: return empty list or all nodes if search fails
         return []
     
     return []
@@ -329,14 +316,11 @@ Title:"""
         title = getattr(response, "text", None)
         if title:
             title = title.strip()
-            # Remove quotes if present
             title = title.strip('"').strip("'").strip()
-            # Truncate to 50 characters if needed
             if len(title) > 50:
                 title = title[:47] + "..."
             return title
         
-        # Try to extract from candidates
         if hasattr(response, "candidates"):
             for candidate in response.candidates or []:
                 if not candidate.content or not getattr(candidate.content, "parts", None):
@@ -352,10 +336,8 @@ Title:"""
     except Exception as exc:
         LOGGER.warning(f"Gemini title generation failed: {exc}. Using fallback.")
     
-    # Fallback: create a simple title from the summary
     fallback = summary.strip()
     if len(fallback) > 50:
-        # Find the last space before 50 characters
         last_space = fallback[:47].rfind(' ')
         if last_space > 20:
             fallback = fallback[:last_space] + "..."
@@ -383,10 +365,8 @@ def generate_short_answer(query: str, summary: str, video_path: Optional[str] = 
     
     model = _get_model()
     
-    # Build content list with prompt and media files
     content_parts = []
     
-    # Add text prompt
     prompt = f"""Based on the following event summary and any provided media (video/audio), provide a concise and direct answer to the user's question.
 
 Event Summary:
@@ -398,14 +378,12 @@ Provide a brief, natural answer (2-3 sentences maximum) that directly addresses 
     
     content_parts.append(prompt)
     
-    # Add video if provided
     video_file = None
     if video_path and Path(video_path).exists():
         try:
             LOGGER.info(f"Uploading video for analysis: {Path(video_path).name}")
             video_file = genai.upload_file(path=video_path)
             
-            # Wait for the video to be processed
             while video_file.state.name == "PROCESSING":
                 time.sleep(5)
                 video_file = genai.get_file(video_file.name)
@@ -420,14 +398,12 @@ Provide a brief, natural answer (2-3 sentences maximum) that directly addresses 
             LOGGER.warning(f"Failed to upload video: {exc}")
             video_file = None
     
-    # Add audio if provided
     audio_file = None
     if audio_path and Path(audio_path).exists():
         try:
             LOGGER.info(f"Uploading audio for analysis: {Path(audio_path).name}")
             audio_file = genai.upload_file(path=audio_path)
             
-            # Wait for the audio to be processed
             while audio_file.state.name == "PROCESSING":
                 time.sleep(5)
                 audio_file = genai.get_file(audio_file.name)
@@ -448,7 +424,6 @@ Provide a brief, natural answer (2-3 sentences maximum) that directly addresses 
             request_options={"timeout": timeout},
         )
         
-        # Clean up uploaded files
         if video_file:
             try:
                 genai.delete_file(video_file.name)
@@ -467,7 +442,6 @@ Provide a brief, natural answer (2-3 sentences maximum) that directly addresses 
         if answer:
             return answer.strip()
         
-        # Try to extract from candidates
         if hasattr(response, "candidates"):
             for candidate in response.candidates or []:
                 if not candidate.content or not getattr(candidate.content, "parts", None):
@@ -478,7 +452,6 @@ Provide a brief, natural answer (2-3 sentences maximum) that directly addresses 
                         return text.strip()
         
     except Exception as exc:
-        # Clean up uploaded files on error
         if video_file:
             try:
                 genai.delete_file(video_file.name)
