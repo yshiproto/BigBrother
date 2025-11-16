@@ -61,47 +61,58 @@ function Recording() {
 
         // Check if summary is loading
         const summaryText = metadata.summary;
-        const isSummaryLoading = summaryText === "Loading Summary..." || summaryText === null || !summaryText || summaryText.trim() === "";
-        const fullSummary = isSummaryLoading ? "Loading Summary..." : (summaryText || "No summary available");
+        const isSummaryLoading =
+          summaryText === "Loading Summary..." ||
+          summaryText === null ||
+          !summaryText ||
+          summaryText.trim() === "";
+        const fullSummary = isSummaryLoading
+          ? "Loading Summary..."
+          : summaryText || "No summary available";
 
-        // Format timestamp as title (e.g., "11/15 11:52 PM")
-        const timestamp = node.timestamp || new Date().toISOString();
+        // Use title from metadata if available, otherwise generate from timestamp
+        let eventTitle = metadata.title;
 
-        // Ensure timestamp is treated as UTC - add 'Z' if not present
-        let utcTimestamp = timestamp;
-        if (
-          !utcTimestamp.endsWith("Z") &&
-          !utcTimestamp.includes("+") &&
-          !utcTimestamp.includes("-", 10)
-        ) {
-          // If no timezone info, assume it's UTC and add 'Z'
-          utcTimestamp = utcTimestamp.replace(/\.\d{3,6}/, "") + "Z";
+        if (!eventTitle || eventTitle.trim() === "") {
+          // Format timestamp as title (e.g., "11/15 11:52 PM")
+          const timestamp = node.timestamp || new Date().toISOString();
+
+          // Ensure timestamp is treated as UTC - add 'Z' if not present
+          let utcTimestamp = timestamp;
+          if (
+            !utcTimestamp.endsWith("Z") &&
+            !utcTimestamp.includes("+") &&
+            !utcTimestamp.includes("-", 10)
+          ) {
+            // If no timezone info, assume it's UTC and add 'Z'
+            utcTimestamp = utcTimestamp.replace(/\.\d{3,6}/, "") + "Z";
+          }
+
+          const date = new Date(utcTimestamp);
+
+          // Format as EST/EDT for title
+          const formatter = new Intl.DateTimeFormat("en-US", {
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+            timeZone: "America/New_York",
+          });
+          const parts = formatter.formatToParts(date);
+          const month = parts.find((p) => p.type === "month").value;
+          const day = parts.find((p) => p.type === "day").value;
+          const hour = parts.find((p) => p.type === "hour").value;
+          const minute = parts.find((p) => p.type === "minute").value;
+          const dayPeriod =
+            parts.find((p) => p.type === "dayPeriod")?.value || "";
+          eventTitle = `${month}/${day} ${hour}:${minute} ${dayPeriod.toUpperCase()}`;
         }
-
-        const date = new Date(utcTimestamp);
-
-        // Format as EST/EDT for title
-        const formatter = new Intl.DateTimeFormat("en-US", {
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-          timeZone: "America/New_York",
-        });
-        const parts = formatter.formatToParts(date);
-        const month = parts.find((p) => p.type === "month").value;
-        const day = parts.find((p) => p.type === "day").value;
-        const hour = parts.find((p) => p.type === "hour").value;
-        const minute = parts.find((p) => p.type === "minute").value;
-        const dayPeriod =
-          parts.find((p) => p.type === "dayPeriod")?.value || "";
-        const formattedTitle = `${month}/${day} ${hour}:${minute} ${dayPeriod.toUpperCase()}`;
 
         return {
           id: node.id,
-          title: formattedTitle,
-          timestamp: timestamp,
+          title: eventTitle,
+          timestamp: node.timestamp || new Date().toISOString(),
           summary: fullSummary,
           transcript: metadata.transcript || null,
           video_path: metadata.video_path || node.file_path,
