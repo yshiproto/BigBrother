@@ -30,15 +30,17 @@ except (ImportError, ModuleNotFoundError):
     logging.warning("Database module not found. Events will be logged to console only.")
 
 
-def _import_gemini_helpers() -> (Callable[[str], str], Callable[[str], str]):
+def _import_gemini_helpers() -> (Callable[[str], str], Callable[[str], str], Callable[[str], str]):
     """Return `describe_image` and `summarize_video` callables if available, else safe fallbacks."""
     try:
-        from ai.gemini_client import describe_image, summarize_video
+        from ai.gemini_client import describe_image, summarize_video, generate_title
         if not callable(describe_image):
             raise ImportError("describe_image not callable")
         if not callable(summarize_video):
             raise ImportError("summarize_video not callable")
-        return describe_image, summarize_video
+        if not callable(generate_title):
+            raise ImportError("generate_title not callable")
+        return describe_image, summarize_video, generate_title
     except (ImportError, ModuleNotFoundError) as exc:
         logging.warning("Gemini client unavailable or incomplete: %s", exc)
 
@@ -47,8 +49,42 @@ def _import_gemini_helpers() -> (Callable[[str], str], Callable[[str], str]):
     
     def _fallback_summarize(video_path: str) -> str:
         return "Video summary unavailable"
+    
+    def _fallback_generate_title(text: str) -> str:
+        # Simple title generation: take first 50 characters of text
+        if not text or len(text.strip()) == 0:
+            return "Recording"
+        text = text.strip()
+        if len(text) > 50:
+            # Find last space before 50 characters
+            last_space = text[:47].rfind(' ')
+            if last_space > 20:
+                return text[:last_space] + "..."
+            return text[:47] + "..."
+        return text
 
-    return _fallback_describe, _fallback_summarize
+    return _fallback_describe, _fallback_summarize, _fallback_generate_title
+
+
+def _generate_title_from_transcript(transcript: str, generate_title_fn: Callable[[str], str]) -> str:
+    """Generate a title from transcript text. Uses Gemini if available, otherwise simple truncation."""
+    if not transcript or len(transcript.strip()) == 0:
+        return "Recording"
+    
+    # Use Gemini to generate title if available
+    try:
+        title = generate_title_fn(transcript)
+        return title
+    except Exception as e:
+        logging.warning(f"Failed to generate title with Gemini: {e}. Using simple truncation.")
+        # Fallback to simple truncation
+        text = transcript.strip()
+        if len(text) > 50:
+            last_space = text[:47].rfind(' ')
+            if last_space > 20:
+                return text[:last_space] + "..."
+            return text[:47] + "..."
+        return text
 
 
 def _import_audio_helpers():
@@ -96,6 +132,7 @@ def analyze_and_log_video(
     audio_path: Optional[str] = None,
     transcript_path: Optional[str] = None,
     transcript: Optional[str] = None,
+    generate_title: Optional[Callable[[str], str]] = None,
 ):
     """
     Analyzes a video in a separate thread, generates a summary, and logs the event.
@@ -177,7 +214,16 @@ def analyze_and_log_video(
                     
                     # Update with video analysis data (summary, objects, etc.)
                     existing_metadata['video_path'] = video_path
-                    existing_metadata['summary'] = summary
+                    existing_metadata['summary'] = summary  # Replace "Loading Summary..." with actual summary
+                    
+                    # Generate title from summary if we have summary and no title yet
+                    if summary and generate_title and not existing_metadata.get('title'):
+                        try:
+                            title = _generate_title_from_transcript(summary, generate_title)
+                            existing_metadata['title'] = title
+                            logging.info(f"Generated title from summary: {title}")
+                        except Exception as e:
+                            logging.warning(f"Failed to generate title from summary: {e}")
                     existing_metadata['objects_detected'] = objects
                     existing_metadata['description'] = description
                     existing_metadata['thumbnail_path'] = str(first_frame_path)
@@ -244,7 +290,7 @@ def run_camera_loop(
                          to update status during the loop
     """
     yolo_model = _load_yolo_model()
-    describe_image, summarize_video = _import_gemini_helpers()
+    describe_image, summarize_video, generate_title_fn = _import_gemini_helpers()
     audio_recorder, transcribe_audio, save_transcript = _import_audio_helpers()
     
     # Log audio recorder status and test microphone access
@@ -500,6 +546,31 @@ def run_camera_loop(
                         if not current_audio_path:
                             logging.warning("✗ No audio path set - audio was not recorded")
                     
+                    # IMMEDIATELY create MemoryNode with "Loading Summary..." placeholder
+                    # This ensures the event appears in Timeline.js right away
+                    if create_memory_node and current_video_path:
+                        try:
+                            ts_utc = datetime.utcnow()
+                            metadata = {
+                                "video_path": current_video_path,
+                                "audio_path": current_audio_path,
+                                "transcript_path": None,  # Will be set when transcription completes
+                                "summary": "Loading Summary...",  # Placeholder until Gemini finishes
+                                "transcript": None,  # Will be set when transcription completes
+                                "title": None,  # Will be generated from transcript
+                                "objects_detected": [],
+                                "description": "Motion detected - processing...",
+                            }
+                            node_id = create_memory_node(
+                                file_path=current_video_path,
+                                file_type="recording",
+                                timestamp=ts_utc.isoformat(),
+                                metadata=json.dumps(metadata)
+                            )
+                            logging.info(f"✓ Created MemoryNode {node_id} immediately after recording stopped (with Loading Summary... placeholder)")
+                        except Exception as e:
+                            logging.error(f"✗ Failed to create immediate MemoryNode: {e}", exc_info=True)
+                    
                     # Transcribe audio if we have a valid audio file
                     if current_audio_path and os.path.exists(current_audio_path):
                         # Transcribe audio in a separate thread
@@ -525,6 +596,15 @@ def run_camera_loop(
                                 else:
                                     logging.error(f"Failed to save transcript: {transcript_path}")
                                 
+                                # Generate title from transcript
+                                title = None
+                                if transcript and generate_title_fn:
+                                    try:
+                                        title = _generate_title_from_transcript(transcript, generate_title_fn)
+                                        logging.info(f"Generated title from transcript: {title}")
+                                    except Exception as e:
+                                        logging.warning(f"Failed to generate title from transcript: {e}")
+                                
                                 # Update or create MemoryNode with transcript data
                                 # We need to either update existing MemoryNode or create one if it doesn't exist yet
                                 if create_memory_node and current_video_path and transcript:
@@ -536,7 +616,7 @@ def run_camera_loop(
                                         )
                                         
                                         # Wait for MemoryNode to be created (with retries)
-                                        max_retries = 15  # More retries since video analysis can take time
+                                        max_retries = 3  # Should exist from immediate creation
                                         retry_delay = 2.0  # 2 seconds between retries
                                         video_node = None
                                         
@@ -558,10 +638,12 @@ def run_camera_loop(
                                             except:
                                                 existing_metadata = {}
                                             
-                                            # Update with transcript data
+                                            # Update with transcript data and title
                                             existing_metadata['transcript'] = transcript
                                             existing_metadata['transcript_path'] = transcript_path
                                             existing_metadata['audio_path'] = current_audio_path
+                                            if title:
+                                                existing_metadata['title'] = title
                                             
                                             # Update the node
                                             if update_memory_node_metadata(video_node['id'], existing_metadata):
@@ -692,6 +774,15 @@ def run_camera_loop(
                                 else:
                                     logging.error(f"Failed to save transcript: {transcript_path}")
                                 
+                                # Generate title from transcript
+                                title = None
+                                if transcript and generate_title_fn:
+                                    try:
+                                        title = _generate_title_from_transcript(transcript, generate_title_fn)
+                                        logging.info(f"Generated title from transcript: {title}")
+                                    except Exception as e:
+                                        logging.warning(f"Failed to generate title from transcript: {e}")
+                                
                                 # Update or create MemoryNode with transcript data
                                 if create_memory_node and current_video_path and transcript:
                                     try:
@@ -732,14 +823,15 @@ def run_camera_loop(
                                         else:
                                             # Create MemoryNode with transcript
                                             metadata = {
-                                                "video_path": current_video_path,
-                                                "audio_path": current_audio_path,
-                                                "transcript_path": transcript_path,
-                                                "summary": None,
-                                                "transcript": transcript,
-                                                "objects_detected": [],
-                                                "description": "Recording with transcript",
-                                            }
+                                                    "video_path": current_video_path,
+                                                    "audio_path": current_audio_path,
+                                                    "transcript_path": transcript_path,
+                                                    "summary": "Loading Summary...",  # Will be updated later
+                                                    "transcript": transcript,
+                                                    "title": title,
+                                                    "objects_detected": [],
+                                                    "description": "Recording with transcript",
+                                                }
                                             node_id = create_node(
                                                 file_path=current_video_path,
                                                 file_type="recording",
