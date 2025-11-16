@@ -122,11 +122,11 @@ function Recording() {
         };
       });
 
-      // Sort by timestamp (newest first)
+      // Sort by timestamp (oldest first, so newest appears at bottom)
       convertedEvents.sort((a, b) => {
         const dateA = new Date(a.timestamp);
         const dateB = new Date(b.timestamp);
-        return dateB - dateA;
+        return dateA - dateB;
       });
 
       setEvents(convertedEvents);
@@ -320,6 +320,25 @@ function Recording() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRecording]);
+
+  // Update selectedEvent when events array updates (e.g., when summary is generated)
+  useEffect(() => {
+    if (selectedEvent) {
+      // Find the updated event in the events array
+      const updatedEvent = events.find((e) => e.id === selectedEvent.id);
+      if (updatedEvent) {
+        // Only update if the event data has actually changed
+        const summaryChanged = updatedEvent.summary !== selectedEvent.summary;
+        const transcriptChanged =
+          updatedEvent.transcript !== selectedEvent.transcript;
+
+        if (summaryChanged || transcriptChanged) {
+          setSelectedEvent(updatedEvent);
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events]);
 
   // Poll camera status regularly ONLY when recording is active
   useEffect(() => {
@@ -559,11 +578,14 @@ function Recording() {
               <h3 className="text-lg font-semibold text-gray-900 mb-3">
                 Event Summary
               </h3>
-              <div className="prose max-w-none max-h-[50vh] overflow-y-auto">
+              <div
+                className="bg-black/50 rounded-lg p-2 overflow-y-auto"
+                style={{ maxHeight: "33vh" }}
+              >
                 {selectedEvent.summary === "Loading Summary..." ? (
-                  <div className="flex items-center gap-2 text-gray-500">
+                  <div className="flex items-center gap-2">
                     <svg
-                      className="animate-spin h-5 w-5"
+                      className="animate-spin h-5 w-5 text-black"
                       xmlns="http://www.w3.org/2000/svg"
                       fill="none"
                       viewBox="0 0 24 24"
@@ -582,10 +604,10 @@ function Recording() {
                         d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                       ></path>
                     </svg>
-                    <p className="text-gray-500 italic">Loading Summary...</p>
+                    <p className="text-black italic">Loading Summary...</p>
                   </div>
                 ) : (
-                  <p className="text-gray-700 leading-relaxed">
+                  <p className="text-black leading-relaxed break-words">
                     {selectedEvent.summary ||
                       "No summary available for this event."}
                   </p>

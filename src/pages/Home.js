@@ -129,7 +129,7 @@ function Home() {
             Try us today for free!
           </h3>
           <p className="text-primary-100 text-lg mb-8 max-w-xl mx-auto">
-            Bigbrother is here to make your life easier.
+            BigBrother is here to make your life easier.
           </p>
           <button
             onClick={handleGetStarted}
